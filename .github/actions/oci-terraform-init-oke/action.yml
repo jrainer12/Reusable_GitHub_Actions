@@ -1,0 +1,76 @@
+name: "OCI Terraform init for OKE"
+description: "Run terraform init with OCI S3-compatible backend and output OKE cluster_id"
+
+inputs:
+  backend_key:
+    description: "Key/path for the Terraform state file in the bucket (e.g. oci-oke/terraform.tfstate)"
+    required: true
+  terraform_version:
+    description: "Terraform version to use"
+    required: false
+    default: "1.5.7"
+
+outputs:
+  cluster_id:
+    description: "OKE cluster OCID from terraform output"
+    value: ${{ steps.capture_cluster.outputs.cluster_id }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ inputs.terraform_version }}
+        terraform_wrapper: false
+
+    - name: Terraform init with OCI backend
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        # Optional: OCI config for provider (if your provider uses it)
+        mkdir -p ~/.oci
+        echo "${{ secrets.OCI_PRIVATE_KEY_BASE64 }}" | base64 -d > ~/.oci/oci_api_key.pem
+        chmod 600 ~/.oci/oci_api_key.pem
+
+        cat > ~/.oci/config <<EOF
+        [DEFAULT]
+        tenancy=${{ secrets.OCI_TENANCY_OCID }}
+        user=${{ secrets.OCI_USER_OCID }}
+        fingerprint=${{ secrets.OCI_FINGERPRINT }}
+        key_file=~/.oci/oci_api_key.pem
+        region=${{ secrets.OCI_REGION }}
+        EOF
+        chmod 600 ~/.oci/config
+
+        # Backend config for OCI S3-compatible Object Storage
+        cat > backend-config.hcl <<BACKEND_EOF
+        bucket                      = "terraform-state"
+        key                         = "${{ inputs.backend_key }}"
+        region                      = "${{ secrets.OCI_REGION }}"
+        endpoint                    = "https://${{ secrets.OCI_OBJECT_STORAGE_NAMESPACE }}.compat.objectstorage.${{ secrets.OCI_REGION }}.oraclecloud.com"
+        access_key                  = "${{ secrets.OCI_S3_ACCESS_KEY_ID }}"
+        secret_key                  = "${{ secrets.OCI_S3_SECRET_ACCESS_KEY }}"
+        skip_credentials_validation = true
+        skip_region_validation       = true
+        skip_metadata_api_check      = true
+        force_path_style             = true
+        BACKEND_EOF
+
+        echo "Running terraform init..."
+        terraform init -no-color -input=false -backend-config=backend-config.hcl
+        rm -f backend-config.hcl
+
+    - name: Capture cluster id output
+      id: capture_cluster
+      shell: bash
+      run: |
+        set -euo pipefail
+        cluster_id=$(terraform output -raw cluster_id 2>/dev/null || echo "")
+        if [ -z "$cluster_id" ]; then
+          echo "⚠️  Warning: terraform output cluster_id is empty"
+        else
+          echo "Terraform cluster_id: $cluster_id"
+        fi
+        echo "cluster_id=$cluster_id" >> "$GITHUB_OUTPUT"
