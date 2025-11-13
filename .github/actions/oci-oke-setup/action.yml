@@ -1,0 +1,87 @@
+name: "OCI OKE kube setup"
+description: "Install OCI CLI, create kubeconfig for an OKE cluster, and install kubectl + Helm"
+
+inputs:
+  cluster_ocid:
+    description: "OCID of the OKE cluster"
+    required: true
+  oci_region:
+    description: "OCI region; optional, falls back to secrets.OCI_REGION"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Write OCI config & key
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        mkdir -p ~/.oci
+        echo "${{ secrets.OCI_PRIVATE_KEY_BASE64 }}" | base64 -d > ~/.oci/oci_api_key.pem
+        chmod 600 ~/.oci/oci_api_key.pem
+
+        region="${{ inputs.oci_region }}"
+        if [ -z "$region" ]; then
+          region="${{ secrets.OCI_REGION }}"
+        fi
+
+        cat > ~/.oci/config <<EOF
+        [DEFAULT]
+        tenancy=${{ secrets.OCI_TENANCY_OCID }}
+        user=${{ secrets.OCI_USER_OCID }}
+        fingerprint=${{ secrets.OCI_FINGERPRINT }}
+        key_file=~/.oci/oci_api_key.pem
+        region=${region}
+        EOF
+
+    - name: Install OCI CLI on runner
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        bash -c "$(curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh)" -- --accept-all-defaults
+
+        export PATH="$HOME/bin:$PATH"
+        echo "$HOME/bin" >> "$GITHUB_PATH"
+
+        oci --version
+
+    - name: Create kubeconfig with OCI CLI
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        region="${{ inputs.oci_region }}"
+        if [ -z "$region" ]; then
+          region="${{ secrets.OCI_REGION }}"
+        fi
+
+        oci ce cluster create-kubeconfig \
+          --cluster-id "${{ inputs.cluster_ocid }}" \
+          --file "$GITHUB_WORKSPACE/kubeconfig" \
+          --region "$region" \
+          --token-version 2.0.0
+
+        mkdir -p "$HOME/.kube"
+        cp "$GITHUB_WORKSPACE/kubeconfig" "$HOME/.kube/config"
+        chmod 600 "$HOME/.kube/config" || true
+
+    - name: Setup kubectl
+      uses: azure/setup-kubectl@v4
+      with:
+        version: 'latest'
+
+    - name: Setup Helm
+      uses: azure/setup-helm@v4
+      with:
+        version: 'latest'
+
+    - name: Verify cluster access
+      shell: bash
+      run: |
+        set -euo pipefail
+        echo "Verifying cluster access via kubectl..."
+        kubectl get nodes
+        kubectl get po -n kube-system || true
