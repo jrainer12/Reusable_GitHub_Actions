@@ -29,18 +29,20 @@ runs:
       run: |
         set -euo pipefail
 
-        # Optional: OCI config for provider (if your provider uses it)
+        # Expect OCI_* env vars from caller
+
+        # Optional: OCI config for provider
         mkdir -p ~/.oci
-        echo "${{ secrets.OCI_PRIVATE_KEY_BASE64 }}" | base64 -d > ~/.oci/oci_api_key.pem
+        echo "$OCI_PRIVATE_KEY_BASE64" | base64 -d > ~/.oci/oci_api_key.pem
         chmod 600 ~/.oci/oci_api_key.pem
 
         cat > ~/.oci/config <<EOF
         [DEFAULT]
-        tenancy=${{ secrets.OCI_TENANCY_OCID }}
-        user=${{ secrets.OCI_USER_OCID }}
-        fingerprint=${{ secrets.OCI_FINGERPRINT }}
+        tenancy=$OCI_TENANCY_OCID
+        user=$OCI_USER_OCID
+        fingerprint=$OCI_FINGERPRINT
         key_file=~/.oci/oci_api_key.pem
-        region=${{ secrets.OCI_REGION }}
+        region=$OCI_REGION
         EOF
         chmod 600 ~/.oci/config
 
@@ -48,10 +50,10 @@ runs:
         cat > backend-config.hcl <<BACKEND_EOF
         bucket                      = "terraform-state"
         key                         = "${{ inputs.backend_key }}"
-        region                      = "${{ secrets.OCI_REGION }}"
-        endpoint                    = "https://${{ secrets.OCI_OBJECT_STORAGE_NAMESPACE }}.compat.objectstorage.${{ secrets.OCI_REGION }}.oraclecloud.com"
-        access_key                  = "${{ secrets.OCI_S3_ACCESS_KEY_ID }}"
-        secret_key                  = "${{ secrets.OCI_S3_SECRET_ACCESS_KEY }}"
+        region                      = "$OCI_REGION"
+        endpoint                    = "https://$OCI_OBJECT_STORAGE_NAMESPACE.compat.objectstorage.$OCI_REGION.oraclecloud.com"
+        access_key                  = "$OCI_S3_ACCESS_KEY_ID"
+        secret_key                  = "$OCI_S3_SECRET_ACCESS_KEY"
         skip_credentials_validation = true
         skip_region_validation       = true
         skip_metadata_api_check      = true
