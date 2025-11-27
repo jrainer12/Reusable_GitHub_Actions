@@ -25,10 +25,8 @@ runs:
 
         chmod 600 kubeconfig.yaml
 
-        # Make it active for THIS step
         export KUBECONFIG="$(pwd)/kubeconfig.yaml"
 
-        # And for subsequent steps
         echo "KUBECONFIG=$KUBECONFIG" >> "$GITHUB_ENV"
         echo "kubeconfig_path=$KUBECONFIG" >> "$GITHUB_OUTPUT"
 
