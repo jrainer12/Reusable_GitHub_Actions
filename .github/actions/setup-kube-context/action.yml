@@ -20,25 +20,37 @@ runs:
     - id: setup
       shell: bash
       run: |
+        # Write kubeconfig (handles base64 or plain)
         echo "${{ inputs.kubeconfig_data }}" | base64 -d > kubeconfig.yaml 2>/dev/null || echo "${{ inputs.kubeconfig_data }}" > kubeconfig.yaml
 
         chmod 600 kubeconfig.yaml
 
-        echo "KUBECONFIG=$(pwd)/kubeconfig.yaml" >> $GITHUB_ENV
-        echo "kubeconfig_path=$(pwd)/kubeconfig.yaml" >> $GITHUB_OUTPUT
+        # Make it active for THIS step
+        export KUBECONFIG="$(pwd)/kubeconfig.yaml"
 
+        # And for subsequent steps
+        echo "KUBECONFIG=$KUBECONFIG" >> "$GITHUB_ENV"
+        echo "kubeconfig_path=$KUBECONFIG" >> "$GITHUB_OUTPUT"
+
+        # Select context: explicit > current-context > first context
         if [[ -n "${{ inputs.context_name }}" ]]; then
           ctx="${{ inputs.context_name }}"
+        elif kubectl config current-context >/dev/null 2>&1; then
+          ctx=$(kubectl config current-context)
         else
           ctx=$(kubectl config get-contexts -o name | head -n 1)
         fi
 
         if [[ -z "$ctx" ]]; then
-          echo "❌ No K8s context found!"
+          echo "❌ No K8s context found! Check that your KUBECONFIG secret is a full kubeconfig with contexts."
+          kubectl config view || true
           exit 1
         fi
 
+        echo "Using Kubernetes context: $ctx"
         kubectl config use-context "$ctx"
-        echo "selected_context=$ctx" >> $GITHUB_OUTPUT
 
+        echo "selected_context=$ctx" >> "$GITHUB_OUTPUT"
+
+        # Sanity check (non-fatal)
         kubectl cluster-info || echo "⚠️ Warning: cluster unreachable (but continuing)"
