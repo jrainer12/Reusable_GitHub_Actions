@@ -9,11 +9,11 @@ inputs:
     description: "Comma-separated list of environments (e.g. 'prod,staging')"
     required: true
     default: "prod"
-  release_names:
+  release_name:
     description: |
-      Optional comma-separated list of module:releaseName pairs.
-      Example: "api:googlecalendartoluma-api,cronjob:googlecalendartoluma-cron".
-      If not provided or if a module has no mapping, releaseName defaults to the module name.
+      Optional single release name to attach to all matrix entries.
+      Example: "googlecalendartoluma-api".
+      If omitted/empty, releaseName defaults to the module name.
     required: false
     default: ""
 
@@ -22,7 +22,7 @@ outputs:
     description: "Matrix JSON for modules only"
     value: ${{ steps.modules.outputs.modules_json }}
   matrix_json:
-    description: "Full matrix JSON for module+environment"
+    description: "Full matrix JSON for module+environment (+ releaseName)"
     value: ${{ steps.matrix.outputs.matrix_json }}
 
 runs:
@@ -32,16 +32,20 @@ runs:
       name: Construct modules-only matrix JSON
       shell: bash
       run: |
+        set -euo pipefail
+
         MODULES_JSON='{"include":['
         IFS=',' read -ra MODULES <<< "${{ inputs.modules }}"
         for module in "${MODULES[@]}"; do
+          [[ -z "$module" ]] && continue
           MODULE_LOWER=$(echo "$module" | tr '[:upper:]' '[:lower:]')
           MODULES_JSON+='{"module":"'"$module"'","module_lower":"'"$MODULE_LOWER"'"},'
         done
         MODULES_JSON=${MODULES_JSON%,}
         MODULES_JSON+=']}'
+
         echo "Modules JSON: $MODULES_JSON"
-        echo "modules_json=$MODULES_JSON" >> $GITHUB_OUTPUT
+        echo "modules_json=$MODULES_JSON" >> "$GITHUB_OUTPUT"
 
     - id: matrix
       name: Construct full matrix JSON
@@ -49,57 +53,31 @@ runs:
       run: |
         set -euo pipefail
 
-        # Raw inputs
         MODULES_STR="${{ inputs.modules }}"
         ENVS_STR="${{ inputs.environments }}"
-        RELEASE_NAMES_STR="${{ inputs.release_names }}"
-
-        # Parse release name overrides into an array of "module:release"
-        declare -A RELEASE_MAP
-
-        if [[ -n "$RELEASE_NAMES_STR" ]]; then
-          IFS=',' read -ra PAIRS <<< "$RELEASE_NAMES_STR"
-          for pair in "${PAIRS[@]}"; do
-            # Skip empty pieces
-            [[ -z "$pair" ]] && continue
-
-            # module:release (only split on first colon)
-            key="${pair%%:*}"
-            val="${pair#*:}"
-
-            # Skip if malformed
-            if [[ -z "$key" || -z "$val" || "$key" == "$val" ]]; then
-              continue
-            fi
-
-            RELEASE_MAP["$key"]="$val"
-          done
-        fi
-
-        # Helper to fetch release name: override if present, else module name
-        get_release_name() {
-          local module="$1"
-          if [[ -n "${RELEASE_MAP[$module]+x}" ]]; then
-            echo "${RELEASE_MAP[$module]}"
-          else
-            echo "$module"
-          fi
-        }
+        RELEASE_NAME_INPUT="${{ inputs.release_name }}"
 
         IFS=',' read -ra MODULES <<< "$MODULES_STR"
         IFS=',' read -ra ENVIRONMENTS <<< "$ENVS_STR"
 
-        MATRIX_JSON="{\"include\": ["
+        MATRIX_JSON='{"include":['
+
         for ENV in "${ENVIRONMENTS[@]}"; do
           for MODULE in "${MODULES[@]}"; do
             [[ -z "$MODULE" ]] && continue
-            MODULE_LOWER=$(echo "$MODULE" | tr '[:upper:]' '[:lower:]')
-            RELEASE_NAME=$(get_release_name "$MODULE")
 
-            MATRIX_JSON+="{\"environment\": \"$ENV\", \"module\": \"$MODULE\", \"module_lower\": \"$MODULE_LOWER\", \"releaseName\": \"$RELEASE_NAME\"},"
+            MODULE_LOWER=$(echo "$MODULE" | tr '[:upper:]' '[:lower:]')
+
+            if [[ -n "$RELEASE_NAME_INPUT" ]]; then
+              RELEASE_NAME="$RELEASE_NAME_INPUT"
+            else
+              RELEASE_NAME="$MODULE"
+            fi
+
+            MATRIX_JSON+="{\"environment\":\"$ENV\",\"module\":\"$MODULE\",\"module_lower\":\"$MODULE_LOWER\",\"releaseName\":\"$RELEASE_NAME\"},"
           done
         done
 
         MATRIX_JSON="${MATRIX_JSON%,}]}"
         echo "MATRIX_JSON=$MATRIX_JSON"
-        echo "matrix_json=$MATRIX_JSON" >> $GITHUB_OUTPUT
+        echo "matrix_json=$MATRIX_JSON" >> "$GITHUB_OUTPUT"
