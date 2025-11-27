@@ -30,18 +30,24 @@ runs:
         echo "KUBECONFIG=$KUBECONFIG" >> "$GITHUB_ENV"
         echo "kubeconfig_path=$KUBECONFIG" >> "$GITHUB_OUTPUT"
 
-        # Select context: explicit > current-context > first context
+        # If context_name is supplied, try to use that explicitly
         if [[ -n "${{ inputs.context_name }}" ]]; then
           ctx="${{ inputs.context_name }}"
-        elif kubectl config current-context >/dev/null 2>&1; then
-          ctx=$(kubectl config current-context)
+          # Verify it actually exists
+          if ! kubectl config get-contexts -o name | grep -Fxq "$ctx"; then
+            echo "❌ Specified context '${{ inputs.context_name }}' not found in kubeconfig"
+            echo "Available contexts:"
+            kubectl config get-contexts || true
+            exit 1
+          fi
         else
+          # Grab the first real context
           ctx=$(kubectl config get-contexts -o name | head -n 1)
         fi
 
         if [[ -z "$ctx" ]]; then
-          echo "❌ No K8s context found! Check that your KUBECONFIG secret is a full kubeconfig with contexts."
-          kubectl config view || true
+          echo "❌ No contexts found in kubeconfig"
+          kubectl config get-contexts || true
           exit 1
         fi
 
