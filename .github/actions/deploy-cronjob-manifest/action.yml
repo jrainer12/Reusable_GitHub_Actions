@@ -1,0 +1,35 @@
+name: Deploy CronJob manifest
+description: Substitutes image and applies CronJob YAML.
+
+inputs:
+  namespace:
+    required: true
+  environment:
+    required: true
+  cronjob_manifest:
+    required: true
+  configmap_manifest:
+    required: true
+  image_full:
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        ENV="${{ inputs.environment }}"
+        NS="${{ inputs.namespace }}"
+        MANIFEST="${{ inputs.cronjob_manifest }}"
+        CONFIG="${{ inputs.configmap_manifest }}"
+        IMAGE="${{ inputs.image_full }}"
+
+        cp "$MANIFEST" cronjob-temp.yaml
+
+        sed -i "s|image:.*|image: $IMAGE|g" cronjob-temp.yaml
+        sed -i "s|imagePullPolicy:.*|imagePullPolicy: Always|g" cronjob-temp.yaml
+
+        kubectl apply -n "$NS" -f "$CONFIG"
+        kubectl apply -n "$NS" -f cronjob-temp.yaml
+
+        rm -f cronjob-temp.yaml

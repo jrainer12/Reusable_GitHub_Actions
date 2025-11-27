@@ -1,0 +1,49 @@
+name: Deploy Helm release
+description: Generic Helm upgrade/install for any module.
+
+inputs:
+  chart_path:
+    required: true
+  release_name:
+    required: true
+  namespace:
+    required: true
+  environment:
+    required: true
+  image_repository:
+    required: true
+  image_tag:
+    required: true
+  values_file_base:
+    default: "values.yaml"
+
+runs:
+  using: composite
+  steps:
+    - uses: azure/setup-helm@v3
+
+    - shell: bash
+      run: |
+        CHART="${{ inputs.chart_path }}"
+        RELEASE="${{ inputs.release_name }}"
+        NAMESPACE="${{ inputs.namespace }}"
+        ENV="${{ inputs.environment }}"
+        IMAGE_REPO="${{ inputs.image_repository }}"
+        TAG="${{ inputs.image_tag }}"
+
+        if [[ -f "$CHART/values-$ENV.yaml" ]]; then
+          VALUES="$CHART/values-$ENV.yaml"
+        else
+          VALUES="$CHART/${{ inputs.values_file_base }}"
+        fi
+
+        helm upgrade --install "$RELEASE" "$CHART" \
+          --namespace "$NAMESPACE" \
+          --set image.repository="$IMAGE_REPO" \
+          --set image.tag="$TAG" \
+          --set image.pullPolicy=Always \
+          --set env.name="$ENV" \
+          -f "$VALUES" \
+          --wait --timeout 300s
+
+        kubectl get deployment "$RELEASE" -n "$NAMESPACE" || true

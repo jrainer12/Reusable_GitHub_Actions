@@ -1,0 +1,44 @@
+name: Setup Kubernetes context
+description: Writes kubeconfig, fixes permissions, chooses context, exports KUBECONFIG.
+
+inputs:
+  kubeconfig_data:
+    required: true
+  context_name:
+    required: false
+    default: ""
+
+outputs:
+  kubeconfig_path:
+    value: ${{ steps.setup.outputs.kubeconfig_path }}
+  selected_context:
+    value: ${{ steps.setup.outputs.selected_context }}
+
+runs:
+  using: composite
+  steps:
+    - id: setup
+      shell: bash
+      run: |
+        echo "${{ inputs.kubeconfig_data }}" | base64 -d > kubeconfig.yaml 2>/dev/null || echo "${{ inputs.kubeconfig_data }}" > kubeconfig.yaml
+
+        chmod 600 kubeconfig.yaml
+
+        echo "KUBECONFIG=$(pwd)/kubeconfig.yaml" >> $GITHUB_ENV
+        echo "kubeconfig_path=$(pwd)/kubeconfig.yaml" >> $GITHUB_OUTPUT
+
+        if [[ -n "${{ inputs.context_name }}" ]]; then
+          ctx="${{ inputs.context_name }}"
+        else
+          ctx=$(kubectl config get-contexts -o name | head -n 1)
+        fi
+
+        if [[ -z "$ctx" ]]; then
+          echo "❌ No K8s context found!"
+          exit 1
+        fi
+
+        kubectl config use-context "$ctx"
+        echo "selected_context=$ctx" >> $GITHUB_OUTPUT
+
+        kubectl cluster-info || echo "⚠️ Warning: cluster unreachable (but continuing)"
