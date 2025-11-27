@@ -1,19 +1,21 @@
 name: Prepare matrix JSON for modules/environments
 description: Builds modules_json and matrix_json for matrix strategy
+
 inputs:
   modules:
-    description: "Comma-separated list of modules (e.g. 'api,cronjob')"
+    description: "Comma-separated list of modules (e.g. 'api,worker,backend')"
     required: true
-    default: "api,cronjob"
+    default: "api"
   environments:
     description: "Comma-separated list of environments (e.g. 'prod,staging')"
     required: true
     default: "prod"
-  release_name:
+  release_overrides:
     description: |
-      Optional single release name to attach to all matrix entries.
-      Example: "googlecalendartoluma-api".
-      If omitted/empty, releaseName defaults to the module name.
+      Optional per-module release name overrides in the form:
+      "api:googlecalendartoluma-api,worker:googlecalendartoluma-worker".
+      For a given module, if an override exists, it is used.
+      If no override exists, releaseName defaults to the module name.
     required: false
     default: ""
 
@@ -38,8 +40,8 @@ runs:
         IFS=',' read -ra MODULES <<< "${{ inputs.modules }}"
         for module in "${MODULES[@]}"; do
           [[ -z "$module" ]] && continue
-          MODULE_LOWER=$(echo "$module" | tr '[:upper:]' '[:lower:]')
-          MODULES_JSON+='{"module":"'"$module"'","module_lower":"'"$MODULE_LOWER"'"},'
+          module_lower=$(echo "$module" | tr '[:upper:]' '[:lower:]')
+          MODULES_JSON+='{"module":"'"$module"'","module_lower":"'"$module_lower"'"},'
         done
         MODULES_JSON=${MODULES_JSON%,}
         MODULES_JSON+=']}'
@@ -55,26 +57,40 @@ runs:
 
         MODULES_STR="${{ inputs.modules }}"
         ENVS_STR="${{ inputs.environments }}"
-        RELEASE_NAME_INPUT="${{ inputs.release_name }}"
+        RELEASE_OVERRIDES_STR="${{ inputs.release_overrides }}"
+
+        # Parse per-module release overrides. module_name:release_name
+        declare -A RELEASE_MAP
+        if [[ -n "$RELEASE_OVERRIDES_STR" ]]; then
+          IFS=',' read -ra PAIRS <<< "$RELEASE_OVERRIDES_STR"
+          for pair in "${PAIRS[@]}"; do
+            [[ -z "$pair" ]] && continue
+            key="${pair%%:*}"
+            val="${pair#*:}"
+            [[ -z "$key" || -z "$val" ]] && continue
+            RELEASE_MAP["$key"]="$val"
+          done
+        fi
 
         IFS=',' read -ra MODULES <<< "$MODULES_STR"
         IFS=',' read -ra ENVIRONMENTS <<< "$ENVS_STR"
 
         MATRIX_JSON='{"include":['
 
-        for ENV in "${ENVIRONMENTS[@]}"; do
-          for MODULE in "${MODULES[@]}"; do
-            [[ -z "$MODULE" ]] && continue
+        for env in "${ENVIRONMENTS[@]}"; do
+          for module in "${MODULES[@]}"; do
+            [[ -z "$module" ]] && continue
 
-            MODULE_LOWER=$(echo "$MODULE" | tr '[:upper:]' '[:lower:]')
+            module_lower=$(echo "$module" | tr '[:upper:]' '[:lower:]')
 
-            if [[ -n "$RELEASE_NAME_INPUT" ]]; then
-              RELEASE_NAME="$RELEASE_NAME_INPUT"
+            # Per-module override > default (module name)
+            if [[ -n "${RELEASE_MAP[$module]+x}" ]]; then
+              releaseName="${RELEASE_MAP[$module]}"
             else
-              RELEASE_NAME="$MODULE"
+              releaseName="$module"
             fi
 
-            MATRIX_JSON+="{\"environment\":\"$ENV\",\"module\":\"$MODULE\",\"module_lower\":\"$MODULE_LOWER\",\"releaseName\":\"$RELEASE_NAME\"},"
+            MATRIX_JSON+="{\"environment\":\"$env\",\"module\":\"$module\",\"module_lower\":\"$module_lower\",\"releaseName\":\"$releaseName\"},"
           done
         done
 
