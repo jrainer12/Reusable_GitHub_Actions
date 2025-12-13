@@ -42,7 +42,7 @@ runs:
           --set image.repository="$IMAGE_REPO" \
           --set image.tag="$TAG" \
           --set image.pullPolicy=Always \
-          --set env.name="$ENV" \
+          --set envVars.DEPLOYMENT_PROFILE="$ENV" \
           -f "$VALUES" \
           --wait --timeout 300s
 
