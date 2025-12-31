@@ -1,0 +1,169 @@
+name: 'Run Python Unit Tests'
+description: 'Run pytest unit tests with coverage reporting for Python modules'
+
+inputs:
+  module_path:
+    description: 'Path to the Python module directory (e.g., "api", "cronjob", "./src")'
+    required: true
+  python_version:
+    description: 'Python version to use (e.g., "3.13", "3.12")'
+    required: false
+    default: '3.13'
+  coverage_threshold:
+    description: 'Minimum code coverage percentage (default: 80)'
+    required: false
+    default: '80'
+  codecov_token:
+    description: 'Codecov token (optional, will skip Codecov upload if not provided)'
+    required: false
+  codecov_flags:
+    description: 'Codecov flags for this module (optional)'
+    required: false
+  codecov_name:
+    description: 'Codecov name/identifier for this module (optional, defaults to module_path)'
+    required: false
+  check_name:
+    description: 'Name for the GitHub check run (optional, defaults to "Unit Test Results")'
+    required: false
+    default: 'Unit Test Results'
+  requirements_file:
+    description: 'Path to requirements.txt relative to module_path (default: "requirements.txt")'
+    required: false
+    default: 'requirements.txt'
+  pytest_args:
+    description: 'Additional arguments to pass to pytest (optional)'
+    required: false
+    default: ''
+
+outputs:
+  coverage_percentage:
+    description: 'Code coverage percentage achieved'
+    value: ${{ steps.coverage.outputs.percentage }}
+  test_result:
+    description: 'Test result status (success or failure)'
+    value: ${{ steps.test.outputs.result }}
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ inputs.python_version }}
+        cache: 'pip'
+        cache-dependency-path: ${{ inputs.module_path }}/${{ inputs.requirements_file }}
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        cd ${{ inputs.module_path }}
+        pip install --upgrade pip
+        pip install -r ${{ inputs.requirements_file }}
+
+    - name: Run tests with coverage
+      id: test
+      shell: bash
+      working-directory: ${{ inputs.module_path }}
+      run: |
+        # Run pytest with coverage
+        # Coverage threshold is enforced via pytest.ini or .coveragerc
+        pytest ${{ inputs.pytest_args }} || TEST_EXIT_CODE=$?
+        
+        # Extract coverage percentage if available
+        if [ -f coverage.xml ]; then
+          COVERAGE_PERCENTAGE=$(python -c "
+          import xml.etree.ElementTree as ET
+          try:
+              tree = ET.parse('coverage.xml')
+              root = tree.getroot()
+              line_rate = float(root.get('line-rate', 0))
+              print(f'{line_rate * 100:.2f}')
+          except:
+              print('0.00')
+          " 2>/dev/null || echo "0.00")
+          echo "percentage=$COVERAGE_PERCENTAGE" >> $GITHUB_OUTPUT
+        fi
+        
+        # Set test result
+        if [ -z "${TEST_EXIT_CODE:-}" ]; then
+          echo "result=success" >> $GITHUB_OUTPUT
+        else
+          echo "result=failure" >> $GITHUB_OUTPUT
+          exit $TEST_EXIT_CODE
+        fi
+
+    - name: Extract coverage percentage
+      id: coverage
+      shell: bash
+      if: always()
+      run: |
+        if [ -f ${{ inputs.module_path }}/coverage.xml ]; then
+          COVERAGE_PERCENTAGE=$(python -c "
+          import xml.etree.ElementTree as ET
+          try:
+              tree = ET.parse('${{ inputs.module_path }}/coverage.xml')
+              root = tree.getroot()
+              line_rate = float(root.get('line-rate', 0))
+              print(f'{line_rate * 100:.2f}')
+          except:
+              print('0.00')
+          " 2>/dev/null || echo "0.00")
+          echo "percentage=$COVERAGE_PERCENTAGE" >> $GITHUB_OUTPUT
+        else
+          echo "percentage=0.00" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Set Codecov name
+      id: codecov_name_set
+      shell: bash
+      run: |
+        if [ -z "${{ inputs.codecov_name }}" ]; then
+          echo "name=codecov-${{ inputs.module_path }}" >> $GITHUB_OUTPUT
+        else
+          echo "name=${{ inputs.codecov_name }}" >> $GITHUB_OUTPUT
+        fi
+        if [ -z "${{ inputs.codecov_flags }}" ]; then
+          echo "flags=${{ inputs.module_path }}" >> $GITHUB_OUTPUT
+        else
+          echo "flags=${{ inputs.codecov_flags }}" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      if: always() && inputs.codecov_token != ''
+      with:
+        files: ./${{ inputs.module_path }}/coverage.xml
+        flags: ${{ steps.codecov_name_set.outputs.flags }}
+        name: ${{ steps.codecov_name_set.outputs.name }}
+        token: ${{ inputs.codecov_token }}
+        fail_ci_if_error: false
+        verbose: true
+
+    - name: Upload coverage to Codecov (no token)
+      uses: codecov/codecov-action@v4
+      if: always() && inputs.codecov_token == ''
+      with:
+        files: ./${{ inputs.module_path }}/coverage.xml
+        flags: ${{ steps.codecov_name_set.outputs.flags }}
+        name: ${{ steps.codecov_name_set.outputs.name }}
+        fail_ci_if_error: false
+        verbose: true
+
+    - name: Upload coverage artifacts
+      uses: actions/upload-artifact@v4
+      if: always()
+      with:
+        name: coverage-report-${{ inputs.module_path }}
+        path: |
+          ${{ inputs.module_path }}/coverage.xml
+          ${{ inputs.module_path }}/htmlcov/
+          ${{ inputs.module_path }}/junit.xml
+        retention-days: 30
+
+    - name: Publish Test Results
+      uses: EnricoMi/publish-unit-test-result-action@v2
+      if: always()
+      with:
+        files: ${{ inputs.module_path }}/junit.xml
+        check_name: ${{ inputs.check_name }}
+
